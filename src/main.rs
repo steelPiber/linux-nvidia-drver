@@ -1,75 +1,80 @@
-use reqwest::blocking::Client;
+use reqwest;
 use scraper::{Html, Selector};
-use std::fs::File;
-use std::io::{self, Write};
-use std::path::Path;
+use serde_json::json;
+use std::error::Error;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new();
-    let url = "https://www.nvidia.com/ko-kr/drivers/unix/";
-    println!("🔍 Scraping NVIDIA driver versions from: {}", url);
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    // 1) 웹 페이지에서 HTML을 가져옴
+    let nvidia_url = "https://www.nvidia.com/ko-kr/drivers/unix/";
+    let response = reqwest::get(nvidia_url).await?.text().await?;
+    let documenta = Html::parse_document(&response);
 
-    let res = client.get(url).send()?.text()?;
-    let document = Html::parse_document(&res);
-    let selector = Selector::parse("a").unwrap();
+    // 2) "div#rightContent" 안에 있는 모든 <p> 태그 선택
+    let content_selector = Selector::parse("div#rightContent p").unwrap();
+    let strong_selector = Selector::parse("strong").unwrap();
 
-    let mut driver_links = Vec::new();
-    for element in document.select(&selector) {
-        if let Some(href) = element.value().attr("href") {
-            if href.contains("Download/driverResults.aspx") {
-                let full_url = if href.starts_with("https://") {
-                    href.to_string()
-                } else {
-                    format!("https://www.nvidia.com{}", href)
-                };
-                driver_links.push(full_url);
+    // 결과 JSON 구조
+    let mut driver_data = json!({
+        "Linux x86_64/AMD64/EM64T": []
+    });
+
+    // <p> 들을 전부 순회
+    for p_element in document.select(&content_selector) {
+        // <p> 안에 strong 태그가 있는지 확인
+        //   예: <strong>Linux x86_64/AMD64/EM64T</strong>
+        if let Some(strong_el) = p_element.select(&strong_selector).next() {
+            let strong_text = strong_el.text().collect::<Vec<_>>().join("");
+
+            // "Linux x86_64/AMD64/EM64T"라는 문구가 있는지 검사
+            if strong_text.contains("Linux x86_64/AMD64/EM64T") {
+                // ---- 여기서부터 우리가 원하는 <p> 발견! ----
+                let mut current_title = String::new();
+
+                // <p> 안의 모든 자식 노드를 순회
+                for node in p_element.children() {
+                    // 텍스트 노드(#text)인 경우
+                    if let Some(text_node) = node.value().as_text() {
+                        let trimmed = text_node.trim();
+                        if !trimmed.is_empty() {
+                            // 예) "최신 프로덕션 브랜치 버전:"
+                            current_title = trimmed.replace(":", "").trim().to_string();
+                        }
+                    }
+                    // a 태그인 경우
+                    else if let Some(el) = node.value().as_element() {
+                        if el.name() == "a" {
+                            if let Some(href) = el.attr("href") {
+                                // a 태그 내부 텍스트
+                                let link_text = node
+                                    .children()
+                                    .filter_map(|child| child.value().as_text())
+                                    .map(|txt_node| txt_node.to_string())  // &Text -> String
+                                    .collect::<Vec<String>>()
+                                    .join("")
+                                    .trim()
+                                    .to_string();
+
+                                driver_data["Linux x86_64/AMD64/EM64T"]
+                                    .as_array_mut()
+                                    .unwrap()
+                                    .push(json!({
+                                        "title": current_title,
+                                        "version": link_text,
+                                        "link": href
+                                    }));
+                            }
+                        }
+                    }
+                }
+                // 원하는 <p>는 딱 하나면 되므로, 찾고 나서 break
+                break;
             }
         }
     }
 
-    if driver_links.is_empty() {
-        println!("❌ No driver links found!");
-        return Ok(());
-    }
+    // 결과 출력
+    println!("{}", serde_json::to_string_pretty(&driver_data)?);
 
-    println!("\n🎉 Found {} driver versions:", driver_links.len());
-    for (index, link) in driver_links.iter().enumerate() {
-        println!("[{}]. {}", index + 1, link);
-    }
-
-    println!("📥 Downloading the latest driver version...");
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?; //사용자로부터 입력을 받음
-    let selected_index: usize = input.trim().parse()?; //사용자가 선택한 버전의 인덱스
-
-    if selected_index < 1 || selected_index > driver_links.len() {
-        println!("❌ Invalid selection!");
-        return Ok(());
-    }
-
-    let down_url: &String = &driver_links[selected_index - 1];
-    println!("\n🚀 Downloading: {}", down_url);
-
-    let file_name: &str = down_url.split('/').last().unwrap();
-    println!("💾 Saving to: {}", file_name);
-
-    let driver_response = client.get(down_url).send()?;
-    let total_size: u64 = driver_response.content_length().unwrap_or(0);
-
-    let file_path: &Path = Path::new(file_name);
-    let mut file: File = File::create(file_path)?;
-
-    let mut down: u64 = 0;
-    let bytes = driver_response.bytes()?;
-
-    for chunk in bytes.chunks(4096) {
-        file.write_all(chunk)?;
-        down += chunk.len() as u64;
-        let percent = (down as f64 / total_size as f64) * 100.0;
-        print!("\r⬇️ Downloading... {:.2}%", percent);
-        io::stdout().flush()?;
-    }
-
-    println!("\n✅ Download complete!");
     Ok(())
 }
