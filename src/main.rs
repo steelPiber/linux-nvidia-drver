@@ -1,5 +1,3 @@
-mod version; 
-
 use reqwest;
 use scraper::{Html, Selector};
 use serde_json::json;
