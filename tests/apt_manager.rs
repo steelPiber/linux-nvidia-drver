@@ -1,4 +1,5 @@
 use std::process::Command;
+// apt 패키지 설치 함수
 fn apt_install(package: &str) {
     let output = Command::new("apt")
         .arg("install")
