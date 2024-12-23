@@ -1,4 +1,5 @@
-mod version; 
+mod version;
+use version::get_nvidia_driver_version;
 
 use reqwest;
 use scraper::{Html, Selector};
@@ -9,6 +10,16 @@ use std::fs::File;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    // 0) 현재 설치된 드라이버 버전 확인
+    match get_nvidia_driver_version() {
+        Ok(version) => {
+            println!("Current driver version: {}", version);
+        }
+        Err(e) => {
+            eprintln!("Failed to get driver version: {}", e);
+        }
+    }
+
     // 1) 웹 페이지에서 HTML을 가져옴
     let nvidia_url = "https://www.nvidia.com/ko-kr/drivers/unix/";
     let response = reqwest::get(nvidia_url).await?.text().await?;

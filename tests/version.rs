@@ -1,5 +1,6 @@
 use std::process::Command;
 
+
 fn get_nvidia_driver_version() -> Result<String, String> {
     let output = Command::new("nvidia-smi")
         .arg("--query-gpu=driver_version")
